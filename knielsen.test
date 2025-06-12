@@ -55,6 +55,7 @@ SELECT COUNT(*) FROM t3;
 
 --source include/save_master_gtid.inc
 --connection slave
+--let $slave_timeout= 1800
 --source include/sync_with_master_gtid.inc
 SHOW STATUS LIKE 'Slave_retried_transactions';
 SELECT COUNT(*) FROM t1;

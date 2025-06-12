@@ -24,7 +24,7 @@ GetOptions
      "verbose|v" => \$opt_verbose)
     or usage();
 
-usage() if $opt_help or @ARGV == 0;
+usage() if $opt_help;
 
 read_binlog(@ARGV);
 
@@ -73,7 +73,7 @@ sub scan_retries {
     if (m/^([0-9]{4})-([0-9]{2})-([0-9]{2})  ?([0-9]{1,2}):([0-9]{2}):([0-9]{2}).*\[SUCCESS\].*GTID: ([0-9]+-[0-9]+-[0-9]+)/) {
       my ($y,$mo,$d,$h, $mi, $s, $gtid)= ($1, $2, $3, $4, $5, $6, $7);
       my $time_bin = calc_time_bin($1, $2, $3, $4, $5, $6);
-      next if ($time_bin cmp $start_time_bin) < 0;
+      next if (defined($start_time_bin) && ($time_bin cmp $start_time_bin)) < 0;
       my $sub_key = '?';
       if (exists($gtids->{$gtid})) {
         my $tbls= $gtids->{$gtid}{TABLES};
@@ -119,7 +119,7 @@ sub seek_retries {
   my $file_end = tell $fh;
   my $b = int(($file_end + $gran - 1) / $gran);
 
-  while ($b > $a + 1) {
+  while (defined($start_time_bin) && $b > $a + 1) {
     my $c = int(($a + $b) / 2);
     seek $fh, $c*$gran, 0
         or die "I/O error on retries file: $!\n";
@@ -143,7 +143,8 @@ sub seek_retries {
 # Read GTIDs and involved table names from a binlog file (in text format as
 # output by mysqlbinlog).
 sub read_binlog {
-  print "\nTransactions per $opt_interval seconds interval, as executed on *master*:\n\n";
+  print "\nTransactions per $opt_interval seconds interval, as executed on *master*:\n\n"
+      if scalar(@_) > 0;
   my $cur_gtid;
   my $cur_bin;
   my $gtid_count = 0;
