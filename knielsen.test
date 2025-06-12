@@ -1,0 +1,72 @@
+--source include/have_innodb.inc
+--source include/have_binlog_format_mixed.inc
+--source include/master-slave.inc
+
+# Just a quick thing to general a lot of binlog with a bunch of
+# conflicts in optimistic parallel replication.
+
+SET GLOBAL max_binlog_size = 100*1024*1024;
+
+--connection slave
+SET STATEMENT sql_log_bin=0 FOR ALTER TABLE mysql.gtid_slave_pos ENGINE=InnoDB;
+--source include/stop_slave.inc
+SET GLOBAL slave_parallel_mode=optimistic;
+SET GLOBAL slave_parallel_threads=25;
+CHANGE MASTER TO master_use_gtid=slave_pos;
+--source include/start_slave.inc
+
+--connection master
+CREATE TABLE t1 (a INT PRIMARY KEY, b INT, c VARCHAR(10)) ENGINE=InnoDB;
+CREATE TABLE t2 (a INT PRIMARY KEY, b INT) ENGINE=InnoDB;
+CREATE TABLE t3 (a INT PRIMARY KEY, b INT) ENGINE=InnoDB;
+
+--disable_query_log
+
+--let $i= 0
+while ($i < 300000) {
+  eval INSERT INTO t1 VALUES ($i*10, 0, "hulu");
+  BEGIN;
+  eval INSERT INTO t1 VALUES ($i*10 + 1, $i MOD 511, REPEAT("x", 3 + ($i MOD 5)));
+  eval INSERT INTO t3 VALUES ($i*5, $i);
+  COMMIT;
+  eval UPDATE t1 SET b=$i WHERE a=($i-2)*10;
+  BEGIN;
+  eval INSERT INTO t2 VALUES ($i*10, $i*31);
+  eval UPDATE t3 SET b=b+1 WHERE a=($i-1)*10;
+  COMMIT;
+  eval DELETE FROM t1 WHERE a=($i-10)*10+1;
+  BEGIN;
+  --let $j= 0
+  while ($j < 8) {
+    eval INSERT INTO t1 VALUES ($i*10 + $j + 2, $i+$j, CONCAT($i, '-', $j));
+    inc $j;
+  }
+  eval INSERT INTO t2 VALUES ($i*10+1, $i*3);
+  eval UPDATE t2 SET b=b+100000 WHERE a=($i-10)*10;
+  COMMIT;
+  eval DELETE FROM t1 WHERE a=$i*10+5;
+  inc $i;
+}
+
+--enable_query_log
+SELECT COUNT(*) FROM t1;
+SELECT COUNT(*) FROM t2;
+SELECT COUNT(*) FROM t3;
+
+--source include/save_master_gtid.inc
+--connection slave
+--source include/sync_with_master_gtid.inc
+SHOW STATUS LIKE 'Slave_retried_transactions';
+SELECT COUNT(*) FROM t1;
+SELECT COUNT(*) FROM t2;
+SELECT COUNT(*) FROM t3;
+
+--source include/stop_slave.inc
+SET GLOBAL slave_parallel_mode= default;
+SET GLOBAL slave_parallel_threads= default;
+--source include/start_slave.inc
+
+--connection master
+SET GLOBAL max_binlog_size= default;
+DROP TABLE t1, t2, t3;
+--source include/rpl_end.inc
