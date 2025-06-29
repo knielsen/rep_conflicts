@@ -10,7 +10,8 @@ use Time::Local qw(timelocal_posix timegm_posix);
 my $opt_retries_file;
 my $opt_help;
 my $opt_verbose;
-my $opt_interval= 10;
+my $opt_interval = 10;
+my $opt_table_limit = 5;
 
 my $gtids = {};
 my $hist = {};
@@ -21,6 +22,7 @@ GetOptions
     ("help|h" => \$opt_help,
      "slave-retries-file|r=s" => \$opt_retries_file,
      "interval|i=i" => \$opt_interval,
+     "num-tables|n=i" => \$opt_table_limit,
      "verbose|v" => \$opt_verbose)
     or usage();
 
@@ -57,9 +59,11 @@ sub show_hist {
   print "\n";
   print "Conflicts/retries per $opt_interval seconds interval, total and per tables:\n\n";
   for my $k (sort keys %$hist) {
-    printf "%s: %5d (%s)\n", $k, $hist->{$k}[0],
-        join(" ", map "$hist->{$k}[1]{$_}:[$_]",
-             (sort { $hist->{$k}[1]{$b} <=> $hist->{$k}[1]{$a} } keys %{$hist->{$k}[1]}));
+    my @elems = map "$hist->{$k}[1]{$_}:[$_]",
+        (sort { $hist->{$k}[1]{$b} <=> $hist->{$k}[1]{$a} } keys %{$hist->{$k}[1]});
+    @elems= splice(@elems, 0, $opt_table_limit)
+        if ($opt_table_limit);
+    printf "%s: %5d (%s)\n", $k, $hist->{$k}[0], join(" ", @elems);
   }
 }
 
@@ -215,6 +219,9 @@ Options:
 
   --interval=N, -i N
     Group data into intervals of N seconds (default: $opt_interval).
+
+  --num-tables=N, -n N
+    Limit conflict frequencies to max. N table combinations (default: $opt_table_limit).
 
   --verbose, -v
     Verbose operation; shows GTIDs where table name could not be determined.
