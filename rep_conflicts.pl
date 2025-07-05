@@ -59,11 +59,28 @@ sub show_hist {
   print "\n";
   print "Conflicts/retries per $opt_interval seconds interval, total and per tables:\n\n";
   for my $k (sort keys %$hist) {
-    my @elems = map "$hist->{$k}[1]{$_}:[$_]",
-        (sort { $hist->{$k}[1]{$b} <=> $hist->{$k}[1]{$a} } keys %{$hist->{$k}[1]});
+    my @elems = map "$hist->{$k}[3]{$_}:[$_]",
+        (sort { $hist->{$k}[3]{$b} <=> $hist->{$k}[3]{$a} } keys %{$hist->{$k}[3]});
     @elems= splice(@elems, 0, $opt_table_limit)
         if ($opt_table_limit);
-    printf "%s: %5d (%s)\n", $k, $hist->{$k}[0], join(" ", @elems);
+    # Try to estimate the actual number of transactions per time interval on
+    # the slave from the GTID sequence numbers (the binlog timestamps are the
+    # master's execution time). This will be an approximation as we only see
+    # timestamps for retried GTIDs.
+    # Note that this currently assumes all/most GTIDs are using domain 0.
+    # Otherwise a more elaborate counting method would be needed.
+    my $prev_seq_no= $hist->{$k}[1];
+    my $end_seq_no= $hist->{$k}[2];
+    my $conflicts= $hist->{$k}[0];
+    my $pct_conflicts;
+    if (defined($prev_seq_no) && defined($end_seq_no) &&
+        $end_seq_no > $prev_seq_no) {
+      $pct_conflicts =
+          sprintf("~%4.1f%%", $conflicts / ($end_seq_no - $prev_seq_no) * 100);
+    } else {
+      $pct_conflicts = '  ???%';
+    }
+    printf "%s: %5d (%s) (%s)\n", $k, $conflicts, $pct_conflicts, join(" ", @elems);
   }
 }
 
@@ -73,11 +90,14 @@ sub show_hist {
 sub scan_retries {
   my ($fh) = @_;
   my $last_bin = undef;
+  my $prev_seq_no;
   while (<$fh>) {
     if (m/^([0-9]{4})-([0-9]{2})-([0-9]{2})  ?([0-9]{1,2}):([0-9]{2}):([0-9]{2}).*\[SUCCESS\].*GTID: ([0-9]+-[0-9]+-[0-9]+)/) {
       my ($y,$mo,$d,$h, $mi, $s, $gtid)= ($1, $2, $3, $4, $5, $6, $7);
       my $time_bin = calc_time_bin($1, $2, $3, $4, $5, $6);
       next if (defined($start_time_bin) && ($time_bin cmp $start_time_bin) < 0);
+      $gtid =~ m/([0-9]+)-[0-9]+-([0-9]+)/ or die "Internal: $gtid";
+      my ($domain, $seq_no)= ($1, $2);
       my $sub_key = '?';
       if (exists($gtids->{$gtid})) {
         my $tbls= $gtids->{$gtid}{TABLES};
@@ -92,21 +112,29 @@ sub scan_retries {
       my $e;
       if (exists($hist->{$time_bin})) {
         $e= $hist->{$time_bin};
+        $e->[1]= $prev_seq_no
+            unless defined($e->[1]);
+        $e->[2]= $seq_no
+            if $domain == 0;
       } else {
         last if $last_bin;
-        $e = $hist->{$time_bin} = [ 0, { }];
+        $e = $hist->{$time_bin} = [ 0,
+                                    $prev_seq_no,
+                                    ($domain == 0 ? $seq_no : $prev_seq_no),
+                                    { }];
       }
       ++$hist->{$time_bin}[0];
-      if (exists($e->[1]{$sub_key})) {
-        ++$e->[1]{$sub_key};
+      if (exists($e->[3]{$sub_key})) {
+        ++$e->[3]{$sub_key};
       } else {
-        $e->[1]{$sub_key} = 1;
+        $e->[3]{$sub_key} = 1;
       }
 
+      $prev_seq_no= $seq_no
+          if $domain == 0;
       # Stop reading the potentially huge retries file when we reach a GTID
       # that's after the last GTID in the binlog.
-      $gtid =~ m/([0-9]+)-[0-9]+-([0-9]+)/ or die "Internal: $gtid";
-      $last_bin = (exists($max_seq_no->{$1}) && $max_seq_no->{$1} < $2);
+      $last_bin = (exists($max_seq_no->{$domain}) && $max_seq_no->{$domain} < $seq_no);
     }
   }
 }
