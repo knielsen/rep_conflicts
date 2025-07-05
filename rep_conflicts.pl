@@ -5,7 +5,7 @@ use warnings;
 
 use Getopt::Long;
 use List::Util qw(uniq);
-use Time::Local qw(timelocal_posix timegm_posix);
+use Time::Local qw(timelocal);
 
 my $opt_retries_file;
 my $opt_help;
@@ -46,7 +46,7 @@ exit 0;
 sub calc_time_bin {
   my ($yr, $mo, $da, $hr, $mi, $sc) = @_;
   my $day_sec = $hr*3600 + $mi * 60 + $sc;
-  my $day = timelocal_posix(0, 0, 0, $da, $mo - 1, $yr - 1900);
+  my $day = timelocal(0, 0, 0, $da, $mo - 1, $yr - 1900);
   my @x = localtime($day + $day_sec - ($day_sec % $opt_interval));
   my $time_bin = sprintf '%04d-%02d-%02d %02d:%02d:%02d',
       $x[5] + 1900, $x[4] + 1, $x[3], $x[2], $x[1], $x[0];
@@ -77,7 +77,7 @@ sub scan_retries {
     if (m/^([0-9]{4})-([0-9]{2})-([0-9]{2})  ?([0-9]{1,2}):([0-9]{2}):([0-9]{2}).*\[SUCCESS\].*GTID: ([0-9]+-[0-9]+-[0-9]+)/) {
       my ($y,$mo,$d,$h, $mi, $s, $gtid)= ($1, $2, $3, $4, $5, $6, $7);
       my $time_bin = calc_time_bin($1, $2, $3, $4, $5, $6);
-      next if (defined($start_time_bin) && ($time_bin cmp $start_time_bin)) < 0;
+      next if (defined($start_time_bin) && ($time_bin cmp $start_time_bin) < 0);
       my $sub_key = '?';
       if (exists($gtids->{$gtid})) {
         my $tbls= $gtids->{$gtid}{TABLES};
@@ -174,7 +174,7 @@ sub read_binlog {
         $start_time_bin = $time_bin
             if !defined($start_time_bin) || ($time_bin cmp $start_time_bin) < 0;
         if (defined($cur_bin)) {
-          if ($time_bin ne $cur_bin) {
+          if (($time_bin cmp $cur_bin) > 0) {
             printf "%s: %7d (%8.1f/s)\n", $cur_bin, $gtid_count, $gtid_count/$opt_interval;
             $cur_bin = $time_bin;
             $gtid_count = 0;
