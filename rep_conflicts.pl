@@ -172,6 +172,14 @@ sub seek_retries {
 }
 
 
+sub print_binlog_bin {
+  my ($cur_bin, $gtid_count, $waited_count) = @_;
+  my $waited_pct = $gtid_count > 0 ? $waited_count / $gtid_count * 100 : 0;
+  printf "%s: %7d (%8.1f/s) %4.1f%% waited\n",
+      $cur_bin, $gtid_count, $gtid_count/$opt_interval, $waited_pct;
+}
+
+
 # Read GTIDs and involved table names from a binlog file (in text format as
 # output by mysqlbinlog).
 sub read_binlog {
@@ -180,6 +188,7 @@ sub read_binlog {
   my $cur_gtid;
   my $cur_bin;
   my $gtid_count = 0;
+  my $waited_count = 0;
   for my $binlog_name (@_) {
     open B, '<', $binlog_name
         or die "Failed to open '$binlog_name' for reading: $!\n";
@@ -193,8 +202,9 @@ sub read_binlog {
     die "Error: File '$binlog_name' appears to be a raw binlog file; this program must be run on the output of mysqlbinlog redirected to a file.\n"
         if $magic eq "\xfebin";
     while (<B>) {
-      if (m/^#([0-9]{6})  ?([0-9]+):([0-9]+):([0-9]+) server id.*\sGTID ([0-9]+-[0-9]+-[0-9]+)/) {
+      if (m/^#([0-9]{6})  ?([0-9]+):([0-9]+):([0-9]+) server id.*\sGTID ([0-9]+-[0-9]+-[0-9]+)(.*)/) {
         $cur_gtid= $5;
+        my $flags= $6;
         $gtids->{$cur_gtid}= { STAMP => [$1, $2, $3, $4], TABLES => [] };
         my $time_bin =
             calc_time_bin(substr($1, 0, 2) + 2000, substr($1, 2, 2),
@@ -203,14 +213,16 @@ sub read_binlog {
             if !defined($start_time_bin) || ($time_bin cmp $start_time_bin) < 0;
         if (defined($cur_bin)) {
           if (($time_bin cmp $cur_bin) > 0) {
-            printf "%s: %7d (%8.1f/s)\n", $cur_bin, $gtid_count, $gtid_count/$opt_interval;
+            print_binlog_bin($cur_bin, $gtid_count, $waited_count);
             $cur_bin = $time_bin;
             $gtid_count = 0;
+            $waited_count = 0;
           }
         } else {
           $cur_bin = $time_bin;
         }
         ++$gtid_count;
+        ++$waited_count if $flags =~ m/ waited/;
         $cur_gtid =~ m/([0-9]+)-[0-9]+-([0-9]+)/ or die "Internal: $cur_gtid";
         $max_seq_no->{$1} = $2
             if (!exists($max_seq_no->{$1}) || $max_seq_no->{$1} < $2);
@@ -221,7 +233,7 @@ sub read_binlog {
     close B;
   }
   if ($gtid_count > 0) {
-    printf "%s: %7d (%8.1f/s)\n", $cur_bin, $gtid_count, $gtid_count/$opt_interval;
+    print_binlog_bin($cur_bin, $gtid_count, $waited_count);
   }
 }
 
