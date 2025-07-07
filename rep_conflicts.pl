@@ -71,16 +71,18 @@ sub show_hist {
     # Otherwise a more elaborate counting method would be needed.
     my $prev_seq_no= $hist->{$k}[1];
     my $end_seq_no= $hist->{$k}[2];
+    my $approx_gtid_count= $end_seq_no - $prev_seq_no;
     my $conflicts= $hist->{$k}[0];
     my $pct_conflicts;
     if (defined($prev_seq_no) && defined($end_seq_no) &&
         $end_seq_no > $prev_seq_no) {
       $pct_conflicts =
-          sprintf("~%4.1f%%", $conflicts / ($end_seq_no - $prev_seq_no) * 100);
+          sprintf("~%4.1f%%", $conflicts / $approx_gtid_count * 100);
     } else {
       $pct_conflicts = '  ???%';
     }
-    printf "%s: %5d (%s) (%s)\n", $k, $conflicts, $pct_conflicts, join(" ", @elems);
+    printf "%s: %5d of ~%7d GTID (%s) (%s)\n",
+        $k, $conflicts, $approx_gtid_count, $pct_conflicts, join(" ", @elems);
   }
 }
 
