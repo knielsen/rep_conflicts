@@ -17,12 +17,14 @@ my $gtids = {};
 my $hist = {};
 my $max_seq_no = {};
 my $start_time_bin;
+my $opt_mysqlbinlog_cmd = 'snow mysqlbinlog 3300';
 
 GetOptions
     ("help|h" => \$opt_help,
      "slave-retries-file|r=s" => \$opt_retries_file,
      "interval|i=i" => \$opt_interval,
      "num-tables|n=i" => \$opt_table_limit,
+     "mysqlbinlog-cmd|b=s" => \$opt_mysqlbinlog_cmd,
      "verbose|v" => \$opt_verbose)
     or usage();
 
@@ -201,8 +203,15 @@ sub read_binlog {
     my $res= read(B, $magic, 4);
     die "Error reading binlog file '$binlog_name'"
         unless defined($res);
-    die "Error: File '$binlog_name' appears to be a raw binlog file; this program must be run on the output of mysqlbinlog redirected to a file.\n"
-        if $magic eq "\xfebin";
+    if ($magic eq "\xfebin") {
+      # Pass the raw binlog file through mysqlbinlog on a pipe.
+      close B;
+      my $quoted_name= $binlog_name;
+      $quoted_name =~ s/'/'"'"'/g;
+      my $cmd= $opt_mysqlbinlog_cmd . " '" . $quoted_name . "'";
+      open B, '-|', $cmd
+          or die "Failed to spawn mysqlbinlog command: $cmd\nError: $!\n";
+    }
     while (<B>) {
       if (m/^#([0-9]{6})  ?([0-9]+):([0-9]+):([0-9]+) server id.*\sGTID ([0-9]+-[0-9]+-[0-9]+)(.*)/) {
         $cur_gtid= $5;
@@ -232,7 +241,8 @@ sub read_binlog {
         push @{$gtids->{$cur_gtid}{TABLES}}, $4;
       }
     }
-    close B;
+    close B
+        or die "Error while reading binlog file $binlog_name: $!\n";
   }
   if ($gtid_count > 0) {
     print_binlog_bin($cur_bin, $gtid_count, $waited_count);
@@ -264,6 +274,11 @@ Options:
 
   --num-tables=N, -n N
     Limit conflict frequencies to max. N table combinations (default: $opt_table_limit).
+
+  --mysqlbinlog-cmd=CMD, -b CMD
+    The mysqlbinlog command line to pipe raw binlog files through for decoding.
+    For example:
+      --mysqlbinlog-cmd="mysqlbinlog --read-from-remote-server --socket=my.sock"
 
   --verbose, -v
     Verbose operation; shows GTIDs where table name could not be determined.
